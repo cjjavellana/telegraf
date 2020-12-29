@@ -5,3 +5,6 @@
 /telegraf.gz
 /vendor
 .DS_Store
+.idea
+influxdb
+*.conf.test

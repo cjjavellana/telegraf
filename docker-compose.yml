@@ -103,3 +103,15 @@ services:
       - -Ctransport.host=localhost
     environment:
       - CRATE_HEAP_SIZE=128m
+  influxdb:
+    image: influxdb:latest
+    volumes:
+      - ./influxdb:/var/lib/influxdb
+    ports:
+      - 8086:8086
+    depends_on:
+      - grafana
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - 3000:3000
