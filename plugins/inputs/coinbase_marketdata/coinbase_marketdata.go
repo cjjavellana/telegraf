@@ -115,22 +115,13 @@ func (wsl *WebSocketListener) Start(acc telegraf.Accumulator) error {
 	log.Print("Service Address: ", wsl.ServiceAddress)
 	log.Print("Subscription Request: ", wsl.OnConnectMsg)
 
-	c, _, err := websocket.DefaultDialer.Dial(wsl.ServiceAddress, nil)
+	err := wsl.connect()
 	if err != nil {
-		log.Fatal("dial:", err)
 		return err
 	}
-	wsl.conn = c
 
 	// start the routine for reading incoming data stream
 	go wsl.read()
-
-	//
-	err = wsl.subscribe()
-	if err != nil {
-		log.Fatal("subscribe:", err)
-		return err
-	}
 
 	return nil
 }
@@ -224,7 +215,6 @@ func (wsl *WebSocketListener) parseTicker(tickerData map[string]interface{}) *Ti
 }
 
 func (wsl *WebSocketListener) read() {
-
 	for {
 		select {
 		case <-wsl.done:
@@ -233,8 +223,14 @@ func (wsl *WebSocketListener) read() {
 		default:
 			_, message, err := wsl.conn.ReadMessage()
 			if err != nil {
-				log.Println("read: ", err)
-				return
+				log.Println("Read Error: ", err, " Reconnecting...")
+
+				err := wsl.connect()
+				if err != nil {
+					log.Println("Unable to reconnect, quitting...")
+					return
+				}
+				continue
 			}
 
 			log.Printf("recv: %s\n", message)
@@ -244,14 +240,7 @@ func (wsl *WebSocketListener) read() {
 	}
 }
 
-func (wsl *WebSocketListener) addMetric(message []byte) {
-	marketData := make(map[string]interface{})
-	err := json.Unmarshal(message, &marketData)
-	if err != nil {
-		wsl.AddError(fmt.Errorf("unable to parse incoming msg: %s", err))
-		return
-	}
-
+func (wsl *WebSocketListener) parse(marketData map[string]interface{}) []byte {
 	var data []byte
 
 	if marketData["type"] == "ticker" {
@@ -263,6 +252,18 @@ func (wsl *WebSocketListener) addMetric(message []byte) {
 		}
 	}
 
+	return data
+}
+
+func (wsl *WebSocketListener) addMetric(message []byte) {
+	marketData := make(map[string]interface{})
+	err := json.Unmarshal(message, &marketData)
+	if err != nil {
+		wsl.AddError(fmt.Errorf("unable to parse incoming msg: %s", err))
+		return
+	}
+
+	data := wsl.parse(marketData)
 	if data != nil {
 		metrics, err := wsl.Parser.Parse(data)
 		if err != nil {
@@ -276,8 +277,24 @@ func (wsl *WebSocketListener) addMetric(message []byte) {
 	}
 }
 
-func (wsl *WebSocketListener) subscribe() error {
-	return wsl.conn.WriteMessage(websocket.TextMessage, []byte(wsl.OnConnectMsg))
+func (wsl *WebSocketListener) connect() error {
+	c, _, err := websocket.DefaultDialer.Dial(wsl.ServiceAddress, nil)
+	if err != nil {
+		log.Fatal("dial:", err)
+		return err
+	}
+	wsl.conn = c
+	wsl.subscribe()
+
+	return nil
+}
+
+func (wsl *WebSocketListener) subscribe() {
+	err := wsl.conn.WriteMessage(websocket.TextMessage, []byte(wsl.OnConnectMsg))
+	if err != nil {
+		log.Fatalln("Unable to reconnect", err)
+		return
+	}
 }
 
 func (wsl *WebSocketListener) Stop() {
